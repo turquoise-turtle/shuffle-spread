@@ -30,15 +30,22 @@ function getRandomInt(min, max) {
 }
 //based off of https://davidwalsh.name/fill-array-javascript
 var fillRange = function fillRange(character, length) {
+	document.querySelector('style').innerText += ' .' + character + '{ background-color: ' + randomColor() + '}';
 	return Array(length).fill().map(function (item, index) {
 		return character + (index + 1);
 	});
 };
 
-
-
-
-
+//https://www.tutorialspoint.com/generating-random-hex-color-in-javascript
+function randomColor() {
+	let color = '#';
+	for (let i = 0; i < 6; i++){
+	   const random = Math.random();
+	   const bit = (random * 16) | 0;
+	   color += (bit).toString(16);
+	};
+	return color;
+ }
 
 
 
