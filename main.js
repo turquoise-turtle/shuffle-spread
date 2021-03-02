@@ -213,9 +213,6 @@ document.querySelector('#add').addEventListener('click', function() {
 // consolidatelists(lists);
 
 
-
-
-
 var myEles = document.getElementsByTagName('td');
 for(var i=0; i<myEles.length; i++){
     if(myEles[i].innerText == 'Z'){
