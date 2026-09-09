@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Pocket Casts — spread shuffle Up Next
 // @namespace    https://github.com/turquoise-turtle/shuffle-spread
-// @version      0.1.0
+// @version      0.2.0
 // @description  Take a running order from shuffle-spread and build it into the Pocket Casts Up Next queue
 // @author       turquoise-turtle
+// @match        https://pocketcasts.com/*
 // @match        https://play.pocketcasts.com/*
 // @run-at       document-start
 // @grant        none
@@ -684,9 +685,35 @@
 		}));
 	}
 
+	// pocketcasts.com serves the marketing site as well as the player, and the
+	// player's paths cannot be enumerated reliably -- signed out, /podcasts
+	// bounces to /user/login while /upnext and /files simply 404. So rather
+	// than guess at paths, wait for the thing we actually need: a token. It
+	// only ever turns up once the player has authenticated, which is exactly
+	// when this script has something to offer.
+	function haveToken() {
+		if (!token) token = tokenFromStorage();
+		return !!token;
+	}
+
+	function start() {
+		if (haveToken()) return build();
+
+		var waited = 0;
+		var timer = setInterval(function () {
+			waited += 500;
+			if (haveToken()) {
+				clearInterval(timer);
+				build();
+			} else if (waited >= 30000) {
+				clearInterval(timer); // not a signed-in player page
+			}
+		}, 500);
+	}
+
 	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', build);
+		document.addEventListener('DOMContentLoaded', start);
 	} else {
-		build();
+		start();
 	}
 })();

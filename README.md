@@ -54,7 +54,7 @@ been free [since March 2025](https://blog.pocketcasts.com/2025/03/11/webplayer/)
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/), then add
    `pocketcasts-upnext.user.js`.
-2. Open [play.pocketcasts.com](https://play.pocketcasts.com/) and press
+2. Open [pocketcasts.com/podcasts](https://pocketcasts.com/podcasts) and press
    **Spread shuffle** in the bottom right.
 3. **Load subscriptions** — tick the shows you are working through. This is a
    whitelist: nothing joins the shuffle until you tick it, so subscribing to
@@ -81,8 +81,11 @@ rather than guess, so it never queues something you have already heard.
 ### What it talks to
 
 Pocket Casts has no official API, but the apps are open source and the web
-player's own endpoints allow cross-origin calls from `play.pocketcasts.com`,
-which is where the userscript runs. It uses:
+player's own endpoints allow cross-origin calls from `pocketcasts.com`, which is
+where the userscript runs. (The old `play.pocketcasts.com` now redirects there;
+the script still matches it in case you have an old bookmark. `www.pocketcasts.com`
+is *not* an allowed origin — the API returns 403 — so the script does not run
+there.) It uses:
 
 | Endpoint | Body | For |
 |---|---|---|
