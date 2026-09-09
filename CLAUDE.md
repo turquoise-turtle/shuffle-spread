@@ -1,15 +1,24 @@
 # shuffle-spread — working notes
 
-Two independent pieces. Neither imports the other; they meet at two small
+Three independent pieces. None imports another; the first two meet at two small
 handover formats (see README).
 
 - **The page** (`index.html`, `style.css`, `main.js`) — pure ordering. No
   network, no accounts. Given shows and counts, produces a running order.
-- **The userscript** (`pocketcasts-upnext.user.js`) — all Pocket Casts I/O.
-  Runs on the web player, reads what is unplayed, writes Up Next or a playlist.
+- **The shuffle userscript** (`pocketcasts-upnext.user.js`) — Pocket Casts I/O
+  for the running order. Reads what is unplayed, writes Up Next or a playlist.
+- **The archive userscript** (`pocketcasts-archive.user.js`) — unrelated to the
+  shuffle. Bulk-archives one show's episodes by title pattern, for when a feed
+  reset wipes play state.
 
 Keep that split. The page must stay useful with no Pocket Casts account, and
-the userscript must not grow ordering logic of its own.
+the userscripts must not grow ordering logic of their own.
+
+The two userscripts duplicate the auth lift and the `api()` helper, about a
+hundred lines. That is deliberate: with no build step, sharing them would mean
+an `@require` pointing at a raw GitHub URL, which is a moving part at install
+time. Self-contained files are the cheaper trade here. If a third one ever
+arrives, revisit.
 
 ## House style
 
@@ -48,6 +57,7 @@ Unofficial and reverse-engineered. Two sources, and they disagree:
 | `GET /user/playlists` | — | `manual: true` are hand-curated; the rest are saved filters. A manual playlist carries `episodeOrder` **and** `episodes`, and they are mirror images: `episodes` runs oldest `added` first, `episodeOrder` newest first. |
 | `PUT /user/playlists/{p}/episode/{e}` | the whole playlist | see the trap below |
 | `DELETE /user/playlists/{p}/episode/{e}` | `{}` | removes that one episode. Returns the whole playlist as it now stands. The body is an empty JSON object, not absent — send it. |
+| `POST /sync/update_episodes_archive` | `{episodes: [{uuid, podcast}], archive: true}` | archives (or with `false`, un-archives) in bulk. Answers `{}` — it tells you nothing, so read the state back. Only `archive: true` has been captured. |
 | `GET /subscription/status` | — | `tier` (`"Plus"`), `features`. Nothing here gates anything we do. |
 | `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | 302s to `podcasts.pocketcasts.com/{uuid}/episodes_full_{ts}.json`; full episode list, **newest first**. Unauthenticated — the player sends no bearer, only `Origin`. |
 
@@ -61,6 +71,10 @@ fourth playing state.
 
 - `up_next/sync` with an Android-style `upNext.changes` array and `action: 5`
   (replace). The Up Next write path still tries it and verifies.
+- `archive: false` on `/sync/update_episodes_archive` for un-archiving. The
+  shape is symmetrical and the archive userscript's undo uses it, but only
+  `true` has been captured. That undo reads back and says plainly if it did not
+  take.
 
 ## Traps, each of which has already cost a debugging round
 

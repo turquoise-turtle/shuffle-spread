@@ -3,12 +3,13 @@
 Interleaves several podcasts into one running order, spreading each show evenly
 across the whole queue instead of clumping it together.
 
-Two pieces that work on their own or together:
+Two pieces that work on their own or together, plus one unrelated odd job:
 
 | | |
 |---|---|
 | **[The page](https://turquoise-turtle.github.io/shuffle-spread/)** | List your shows and how many episodes you have left, press Shuffle, copy the running order. |
-| **[The userscript](pocketcasts-upnext.user.js)** | On the Pocket Casts web player: reads what you actually have left, and turns a running order back into your Up Next queue or a manual playlist. |
+| **[The shuffle userscript](pocketcasts-upnext.user.js)** | On the Pocket Casts web player: reads what you actually have left, and turns a running order back into your Up Next queue or a manual playlist. |
+| **[The archive userscript](pocketcasts-archive.user.js)** | Nothing to do with shuffling. Bulk-archives one show's episodes by title pattern, for when a feed reset wipes your play state. |
 
 ## How the shuffle works
 
@@ -145,6 +146,33 @@ The script never asks for your password: it lifts the bearer token off the web
 player's own requests, which is why it runs at `document-start`.
 
 This is all unofficial and could break whenever Pocket Casts changes something.
+
+## Bulk archiving after a feed reset
+
+When a podcast re-publishes its whole back catalogue, every episode comes back
+as unplayed and there is no way to fix hundreds of them by hand. The **archive
+userscript** takes rules like
+
+```
+NEH
+MATT 001-200
+```
+
+and archives every episode of the chosen show whose title reads
+`PREFIX### - something` — the whole `NEH` run, and `MATT001` through `MATT200`.
+Omit the range to take every number.
+
+It always previews first: you see the matching titles and a count before
+anything is written, and episodes already archived are left alone. Writes go in
+batches of 25, and because the call answers with a bare `{}` the script reads
+the play state back afterwards and reports how many actually landed rather than
+trusting the 200. The last run is remembered so it can be un-archived, though
+that direction has not been captured from the player and says so if it fails.
+
+Note the prefix is matched literally and must be anchored at the start of the
+title. The Ten Minute Bible Hour's Matthew episodes are `MATT001`, not
+`MAT001` — a three-letter rule there matches nothing, which the preview will
+show you as a count of zero.
 
 ## The handover format
 
