@@ -1,231 +1,246 @@
-//https://stackoverflow.com/a/5767357/
-function removeItemAll(arr, value) {
-	var i = 0;
-	while (i < arr.length) {
-		if (arr[i] === value) {
-			arr.splice(i, 1);
-		} else {
-			++i;
+'use strict';
+
+var STORE = 'shuffle-spread.shows';
+var GOLDEN = 137.508;
+
+// Each show is {uuid, title, count}. `uuid` is only set on rows imported from
+// the Pocket Casts web player; manual rows fall back to a slug of the title, so
+// either kind round-trips through the userscript.
+var shows = [];
+
+function slug(title) {
+	return title.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'show';
+}
+
+// What the userscript matches on.
+function keyOf(show) {
+	return show.uuid || slug(show.title);
+}
+
+function hue(i) {
+	return Math.round(i * GOLDEN) % 360;
+}
+
+/*
+ * Spread shuffle.
+ *
+ * Every show is laid out along the same 0..1 line, so a show with 4 episodes
+ * left gets the same total span as one with 40 -- it just has bigger gaps.
+ * Sorting all the episodes by that position interleaves them proportionally.
+ *
+ * `phase` shifts a whole show along the line and the jitter nudges individual
+ * episodes, so repeat shuffles differ without ever clumping a show together.
+ * With randomise off both are zero, which gives a plain even interleave.
+ *
+ * Inspiration from https://keyj.emphy.de/balanced-shuffle/
+ */
+function spreadShuffle(list, randomise) {
+	var items = [];
+
+	list.forEach(function (show, order) {
+		var n = show.count;
+		if (!(n > 0)) return;
+
+		var phase = randomise ? Math.random() : 0;
+
+		for (var i = 0; i < n; i++) {
+			var pos = (i + phase) / n;
+			if (randomise) {
+				// up to +/-15% of this show's gap, so episodes stay in order
+				pos += (Math.random() - 0.5) * 0.3 / n;
+			}
+			items.push({ show: show, order: order, index: i + 1, pos: pos });
 		}
-	}
-	//return arr;
-}
-//https://30secondsofcode.org/object#deepclone
-const deepClone = obj => {
-	let clone = Object.assign({}, obj);
-	Object.keys(clone).forEach(
-		key => (clone[key] = typeof obj[key] === 'object' ? deepClone(obj[key]) : obj[key])
-	);
-	return Array.isArray(obj) && obj.length
-		? (clone.length = obj.length) && Array.from(clone)
-		: Array.isArray(obj)
-			? Array.from(obj)
-			: clone;
-};
-//https://stackoverflow.com/a/1527820/
-function getRandomInt(min, max) {
-    min = Math.ceil(min);
-    max = Math.floor(max);
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-//based off of https://davidwalsh.name/fill-array-javascript
-var fillRange = function fillRange(character, length) {
-	document.querySelector('style').innerText += ' .' + character + '{ background-color: ' + randomColor() + '}';
-	return Array(length).fill().map(function (item, index) {
-		return character + (index + 1);
 	});
-};
 
-//https://www.tutorialspoint.com/generating-random-hex-color-in-javascript
-function randomColor() {
-	let color = '#';
-	for (let i = 0; i < 6; i++){
-	   const random = Math.random();
-	   const bit = (random * 16) | 0;
-	   color += (bit).toString(16);
-	};
-	return color;
- }
+	items.sort(function (a, b) {
+		return a.pos - b.pos || a.order - b.order || a.index - b.index;
+	});
 
-
-
-
-var lists = [
-	//['A1', 'A2', 'A3', 'A4'],
-	//['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'],
-	//['C1', 'C2', 'C3', 'C4', 'C5'],
-	//['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'D11', 'D12'],
-	//['E1', 'E2', 'E3']
-];
-
-function a(word, length) {
-	// console.log(length);
-	lists.push(fillRange(word, length));	
-}
-//lists.push(fillRange('F', 10))
-//lists.push(fillRange('G', 5))
-
-// a('ninetyninepi', '40');
-// a('planet', '40');
-// a('etiq', 40);
-// a('reply', 13);
-// a('hamish', 41)
-// a('bible', 60);
-// a('background', 27)
-// a('church', 29)
-// a('aom', 50);
-// a('opendoors', 33)
-// a('probs', 39)
-// a('law', 40)
-// a('hertz', 20)
-// a('gcf', 15)
-// a('monday', 17)
-// a('script', 20)
-// a('dark', 50)
-// a('casefile', 50)
-// a('jfh', 30)
-// a('moment', 6)
-// a('mastery', 55)
-// a('longreads', 29)
-// a('sophia', 50)
-// a('timeline', 25)
-// a('punch', 99)
-// a('conversations', 99)
-// a('hamilcast', 99)
-// a('pants', 5)
-// a('made', 14)
-// a('hatemovies', 99)
-// a('offbook', 30)
-// a('empty', 6)
-
-function maxlength(nestedlists) {
-	var max = 0;
-	for (var list of nestedlists) {
-		if (list.length > max) {
-			max = list.length;
-		}
-	}
-	//console.log(max);
-	return max;
+	return items;
 }
 
-function fillwithdummies(nestedlists) {
-	var l = maxlength(nestedlists);
-	for (var list of nestedlists) {
-		var m = list.length;
-		if (m < l) {
-			//console.log(l - m, m/(l-m));
-			var needed = l - m;
-			if (m / (l-m) >= 1) {
-				var flooreddivlength = Math.floor(m / (l-m));
-			} else {
-				var flooreddivlength = m / (l-m);
-			}
-			
-			console.log('m', m, 'needed', needed, 'm/(l-m)', m/(l-m), 'floored=', flooreddivlength) //doesn't work ->, 'l/m', l/m, 'l/needed', l/needed);
-			
-			var curposition = 0 + flooreddivlength;
-			//var curposition = 1;
+/* ---------- state ---------- */
 
-			while (needed > 0) {
-				//console.log(curposition);
-				list.splice(curposition, 0, 'Z');
-				curposition = curposition + 1 + flooreddivlength;
-				needed = needed - 1;
-			}
-			console.log(list);
-		}
-		listtotable('#table1', list)
+function save() {
+	try {
+		localStorage.setItem(STORE, JSON.stringify(shows));
+	} catch (e) {
+		// private browsing, storage full -- the page still works, just forgets
 	}
 }
 
-function listtotable(sel, items) {
-	//var row = document.createElement('tr');
-	for (var item of items) {
-		var row = document.createElement('tr');
-		possibleTitle = item;
-		var regex = /[a-zA-Z]*/;
-    	var numberString = possibleTitle.match(regex)[0];
-		//console.log(item, numberString);
-		row.classList.add(numberString);
-		
-
-		var cell = document.createElement('td');
-		cell.innerText = item;
-		row.appendChild(cell);
-
-		document.querySelector(sel).appendChild(row);
+function load() {
+	try {
+		var raw = localStorage.getItem(STORE);
+		if (raw) shows = JSON.parse(raw);
+	} catch (e) {
+		shows = [];
 	}
-	//document.querySelector(sel).appendChild(row);
+	if (!Array.isArray(shows)) shows = [];
 }
 
-function consolidatelists(nestedlists) {
-	var l = maxlength(nestedlists);
-	var n = nestedlists.length;
-	var ult = [];
+// The userscript hands over a list as #shows=<url-encoded JSON>, so the two
+// pieces can be used together without either depending on the other.
+function importFromHash() {
+	var m = /[#&]shows=([^&]+)/.exec(location.hash);
+	if (!m) return false;
 
-	//basic top to bottom consolidation
-	///*
-	for (var i=0; i<l; i++) {
-		for (var j=0; j<n; j++) {
-			ult.push(nestedlists[j][i]);
-		}
-	}
-	//*/
+	try {
+		var incoming = JSON.parse(decodeURIComponent(m[1]));
+		if (!Array.isArray(incoming) || !incoming.length) return false;
 
-	//random consolidation
-	/*
-	var mini = [];
-	for (var j=0; j<n; j++) {
-		mini.push(j);
+		shows = incoming.map(function (s) {
+			return {
+				uuid: s.k ? String(s.k) : '',
+				title: String(s.t || ''),
+				count: Math.max(0, parseInt(s.n, 10) || 0)
+			};
+		});
+	} catch (e) {
+		return false;
 	}
-	for (var i=0; i<l; i++) {
-		var mj = deepClone(mini);
-		
-		for (var j=0; j<n; j++) {
-			var rowindex = getRandomInt(0, mj.length - 1);
-			var row = mj[rowindex];
-			mj.splice(rowindex, 1);
-			ult.push(nestedlists[row][i]);
-		}
-	}
-	//*/
-		
 
-	console.log(ult);
-	listtotable('#table2', ult);
-	removeItemAll(ult, 'Z');
-	listtotable('#table3', ult);
+	history.replaceState(null, '', location.pathname + location.search);
+	return true;
 }
 
+/* ---------- input table ---------- */
 
-document.querySelector('#add').addEventListener('click', function() {
-	var name = document.querySelector('#name').value;
-	var number = document.querySelector('#number').value;
-	if (name !== 'end' && name !== '') {
-		number = parseFloat(number);
-		// console.log(number, typeof number);
-		a(name, number);
-		document.querySelector('#name').value = '';
-		document.querySelector('#number').value = '';
-	} else {
-		fillwithdummies(lists);
-		consolidatelists(lists);
-		lists = [];
-	}
-})
+var tbody = document.querySelector('#shows tbody');
 
-
-// fillwithdummies(lists);
-// consolidatelists(lists);
-
-
-var myEles = document.getElementsByTagName('td');
-for(var i=0; i<myEles.length; i++){
-    if(myEles[i].innerText == 'Z'){
-         //console.log('gotcha'); 
-
-         //use javascript to style
-         myEles[i].setAttribute('class', "gotcha");
-    }
+function addRow(show) {
+	if (!show) show = { uuid: '', title: '', count: null };
+	shows.push(show);
+	renderInput();
+	var last = tbody.querySelector('tr:last-child input[type=text]');
+	if (last) last.focus();
 }
+
+function renderInput() {
+	tbody.textContent = '';
+
+	shows.forEach(function (show, i) {
+		var tr = document.createElement('tr');
+		tr.style.setProperty('--h', hue(i));
+
+		var tdName = document.createElement('td');
+		tdName.className = 'has-dot';
+		var dot = document.createElement('span');
+		dot.className = 'dot';
+		var name = document.createElement('input');
+		name.type = 'text';
+		name.placeholder = 'Show name';
+		name.value = show.title;
+		name.addEventListener('input', function () {
+			show.title = name.value;
+			save();
+		});
+		tdName.append(dot, name);
+
+		var tdCount = document.createElement('td');
+		var count = document.createElement('input');
+		count.type = 'number';
+		count.min = '0';
+		count.placeholder = '0';
+		count.value = show.count == null ? '' : show.count;
+		count.addEventListener('input', function () {
+			show.count = Math.max(0, parseInt(count.value, 10) || 0);
+			save();
+		});
+		tdCount.appendChild(count);
+
+		var tdDel = document.createElement('td');
+		var del = document.createElement('button');
+		del.type = 'button';
+		del.className = 'del';
+		del.title = 'Remove ' + (show.title || 'show');
+		del.textContent = '×';
+		del.addEventListener('click', function () {
+			shows.splice(i, 1);
+			save();
+			renderInput();
+		});
+		tdDel.appendChild(del);
+
+		tr.append(tdName, tdCount, tdDel);
+		tbody.appendChild(tr);
+	});
+
+	if (!shows.length) addRow();
+}
+
+/* ---------- output ---------- */
+
+var output = document.querySelector('#output');
+var result = document.querySelector('#result');
+var lastOrder = [];
+
+function renderOutput(items) {
+	lastOrder = items;
+	result.textContent = '';
+
+	items.forEach(function (item) {
+		var li = document.createElement('li');
+		li.style.setProperty('--h', hue(item.order));
+
+		var title = document.createElement('span');
+		title.className = 'title';
+		title.textContent = item.show.title || keyOf(item.show);
+
+		li.append(title, ' · #' + item.index);
+		result.appendChild(li);
+	});
+
+	document.querySelector('#count').textContent = items.length
+		? '(' + items.length + ' episodes)'
+		: '';
+	output.hidden = !items.length;
+}
+
+// Tab-separated so the userscript can parse it, readable enough to eyeball.
+function asText() {
+	return lastOrder.map(function (item) {
+		return [keyOf(item.show), item.index, item.show.title].join('\t');
+	}).join('\n');
+}
+
+/* ---------- wiring ---------- */
+
+document.querySelector('#add').addEventListener('click', function () {
+	addRow();
+});
+
+document.querySelector('#clear').addEventListener('click', function () {
+	shows = [];
+	save();
+	renderInput();
+	renderOutput([]);
+});
+
+document.querySelector('#shuffle').addEventListener('click', function () {
+	var randomise = document.querySelector('#randomise').checked;
+	renderOutput(spreadShuffle(shows.filter(function (s) {
+		return s.count > 0;
+	}), randomise));
+	output.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+document.querySelector('#copy').addEventListener('click', function () {
+	var note = document.querySelector('#copied');
+	navigator.clipboard.writeText(asText()).then(function () {
+		note.hidden = false;
+		setTimeout(function () { note.hidden = true; }, 1500);
+	});
+});
+
+// Enter anywhere in the table shuffles rather than doing nothing.
+document.querySelector('#shows').addEventListener('keydown', function (e) {
+	if (e.key === 'Enter') {
+		e.preventDefault();
+		document.querySelector('#shuffle').click();
+	}
+});
+
+if (!importFromHash()) load();
+renderInput();

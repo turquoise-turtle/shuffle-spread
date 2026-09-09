@@ -1,23 +1,43 @@
-<meta charset="UTF-8">
-<style>
-	td {
-		border: 1px solid black;
-	}
-	.gotcha{
-		background-color: red;
-	}
+<!doctype html>
+<html lang="en-AU">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shuffle spread</title>
+<link rel="stylesheet" href="style.css">
 
-	table {
-		display: none;
-	}
-</style>
+<h1>Shuffle spread</h1>
+<p class="lede">
+	Interleaves several podcasts into one running order, spreading each show
+	evenly across the whole queue instead of clumping it.
+</p>
 
-<input type="text" id="name" placeholder="Name"><input type="number" id="number" placeholder="Number"><button id="add">Add</button>
+<section id="input">
+	<table id="shows">
+		<thead>
+			<tr><th class="col-show">Show</th><th class="col-count">Left</th><th class="col-del"><span class="sr">Remove</span></th></tr>
+		</thead>
+		<tbody></tbody>
+	</table>
 
-<table id="table1"></table>
-<br>
-<table id="table2"></table>
-<br>
-<table id="table3" style="display: table"></table>
+	<p class="row-actions">
+		<button type="button" id="add">Add show</button>
+		<button type="button" id="clear" class="quiet">Clear all</button>
+	</p>
+
+	<p class="controls">
+		<label><input type="checkbox" id="randomise" checked> Randomise (different order each time)</label>
+		<button type="button" id="shuffle" class="primary">Shuffle</button>
+	</p>
+</section>
+
+<section id="output" hidden>
+	<h2>Running order <span id="count" class="count"></span></h2>
+	<p class="row-actions">
+		<button type="button" id="copy">Copy</button>
+		<span id="copied" class="copied" hidden>Copied</span>
+	</p>
+	<ol id="result"></ol>
+</section>
 
 <script src="main.js"></script>
+</html>
