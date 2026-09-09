@@ -23,6 +23,30 @@ of this did. Episodes of a show always stay in order.
 
 Inspired by [keyj's balanced shuffle](https://keyj.emphy.de/balanced-shuffle/).
 
+## Not queueing the whole backlog
+
+Two limits, either or both:
+
+- **at most _n_ per show** — takes the oldest _n_ of each show
+- **cap the queue at _n_** — trims the shuffled order to the first _n_
+
+They do quite different things when your backlogs are uneven. With 251, 50, 12
+and 8 episodes left across four shows:
+
+| | Bible | Casefile | 99% Inv | Rebuilders |
+|---|---|---|---|---|
+| cap 40 total | 32 | 6 | 1 | 1 |
+| at most 5 per show | 5 | 5 | 5 | 5 |
+| 10 per show, capped at 25 | 7 | 7 | 6 | 5 |
+
+The total cap keeps each show proportional to how much of it you have left, so
+a big backlog dominates. The per-show cap gives every show equal footing. Set
+both and the per-show limit applies first.
+
+Either way you always get a show's *next* episodes with no gaps — never episode
+5 without 1 to 4 — because episodes only ever move forwards along the line, so
+trimming can only ever cut from the end.
+
 ## Using it with Pocket Casts
 
 Everything below works on the free plan — the web player and Up Next have both

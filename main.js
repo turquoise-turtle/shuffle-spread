@@ -1,6 +1,7 @@
 'use strict';
 
 var STORE = 'shuffle-spread.shows';
+var LIMITS = 'shuffle-spread.limits';
 var GOLDEN = 137.508;
 
 // Each show is {uuid, title, count}. `uuid` is only set on rows imported from
@@ -34,11 +35,13 @@ function hue(i) {
  *
  * Inspiration from https://keyj.emphy.de/balanced-shuffle/
  */
-function spreadShuffle(list, randomise) {
+function spreadShuffle(list, randomise, perShow, total) {
 	var items = [];
 
 	list.forEach(function (show, order) {
-		var n = show.count;
+		// Per-show cap first, so an enormous backlog cannot crowd out the
+		// smaller shows before the total cap even gets a look in.
+		var n = perShow ? Math.min(show.count, perShow) : show.count;
 		if (!(n > 0)) return;
 
 		var phase = randomise ? Math.random() : 0;
@@ -57,7 +60,9 @@ function spreadShuffle(list, randomise) {
 		return a.pos - b.pos || a.order - b.order || a.index - b.index;
 	});
 
-	return items;
+	// Truncating is safe: each show's episodes only ever move forwards along
+	// the line, so any prefix holds episodes 1..j of a show with no gaps.
+	return total ? items.slice(0, total) : items;
 }
 
 /* ---------- state ---------- */
@@ -176,7 +181,7 @@ var output = document.querySelector('#output');
 var result = document.querySelector('#result');
 var lastOrder = [];
 
-function renderOutput(items) {
+function renderOutput(items, available) {
 	lastOrder = items;
 	result.textContent = '';
 
@@ -192,9 +197,10 @@ function renderOutput(items) {
 		result.appendChild(li);
 	});
 
-	document.querySelector('#count').textContent = items.length
-		? '(' + items.length + ' episodes)'
-		: '';
+	document.querySelector('#count').textContent = !items.length ? ''
+		: available && available > items.length
+			? '(' + items.length + ' of ' + available + ' left)'
+			: '(' + items.length + ' episodes)';
 	output.hidden = !items.length;
 }
 
@@ -218,11 +224,45 @@ document.querySelector('#clear').addEventListener('click', function () {
 	renderOutput([]);
 });
 
+function limit(sel) {
+	var value = parseInt(document.querySelector(sel).value, 10);
+	return value > 0 ? value : 0;
+}
+
+function saveLimits() {
+	try {
+		localStorage.setItem(LIMITS, JSON.stringify({
+			perShow: document.querySelector('#per-show').value,
+			total: document.querySelector('#total').value,
+			randomise: document.querySelector('#randomise').checked
+		}));
+	} catch (e) { /* best effort */ }
+}
+
+function loadLimits() {
+	try {
+		var saved = JSON.parse(localStorage.getItem(LIMITS) || '{}');
+		if (saved.perShow) document.querySelector('#per-show').value = saved.perShow;
+		if (saved.total) document.querySelector('#total').value = saved.total;
+		if (saved.randomise === false) document.querySelector('#randomise').checked = false;
+	} catch (e) { /* defaults are fine */ }
+}
+
+['#per-show', '#total', '#randomise'].forEach(function (sel) {
+	document.querySelector(sel).addEventListener('change', saveLimits);
+});
+
 document.querySelector('#shuffle').addEventListener('click', function () {
-	var randomise = document.querySelector('#randomise').checked;
-	renderOutput(spreadShuffle(shows.filter(function (s) {
-		return s.count > 0;
-	}), randomise));
+	var usable = shows.filter(function (s) { return s.count > 0; });
+	var available = usable.reduce(function (n, s) { return n + s.count; }, 0);
+
+	renderOutput(spreadShuffle(
+		usable,
+		document.querySelector('#randomise').checked,
+		limit('#per-show'),
+		limit('#total')
+	), available);
+
 	output.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
@@ -243,4 +283,5 @@ document.querySelector('#shows').addEventListener('keydown', function (e) {
 });
 
 if (!importFromHash()) load();
+loadLimits();
 renderInput();

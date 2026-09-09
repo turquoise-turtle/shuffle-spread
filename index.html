@@ -24,6 +24,13 @@
 		<button type="button" id="clear" class="quiet">Clear all</button>
 	</p>
 
+	<div class="limits">
+		<label>Take at most
+			<input type="number" id="per-show" min="1" placeholder="all"> per show</label>
+		<label>and cap the queue at
+			<input type="number" id="total" min="1" placeholder="all"> episodes</label>
+	</div>
+
 	<p class="controls">
 		<label><input type="checkbox" id="randomise" checked> Randomise (different order each time)</label>
 		<button type="button" id="shuffle" class="primary">Shuffle</button>
