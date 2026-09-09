@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pocket Casts — spread shuffle Up Next
 // @namespace    https://github.com/turquoise-turtle/shuffle-spread
-// @version      0.3.1
+// @version      0.3.4
 // @description  Take a running order from shuffle-spread and build it into a Pocket Casts Up Next queue or manual playlist
 // @author       turquoise-turtle
 // @homepageURL  https://github.com/turquoise-turtle/shuffle-spread
@@ -180,17 +180,21 @@
 	/* ---------------------------------------------------------------
 	 * Up Next
 	 *
-	 * The web player only ever reads through /up_next/sync and makes its
+	 * The web player only ever reads, through /up_next/list, and makes its
 	 * changes one episode at a time via /up_next/play_last and friends.
 	 * The apps can also push a whole queue in one go by sending a change
 	 * list to /up_next/sync with action 5, which is what we try first --
 	 * then check it actually landed, and fall back to appending if not.
+	 *
+	 * /up_next/sync answers the same read with the same body, and used to be
+	 * what we asked. The player has moved to /up_next/list, so we follow it:
+	 * where the two disagree the player is the one we are running inside.
 	 * ------------------------------------------------------------- */
 
 	var serverModified = '0';
 
 	function readUpNext() {
-		return api('/up_next/sync', {
+		return api('/up_next/list', {
 			version: 2,
 			model: 'webplayer',
 			serverModified: serverModified,
@@ -593,27 +597,71 @@
 		ui.undo.appendChild(el('button', {
 			class: 'act warn',
 			text: 'Restore "' + backup.title + '" (' + (backup.episodeOrder || []).length + ')',
-			onclick: function () {
-				say('Restoring "' + backup.title + '"…');
-				readPlaylist(backup.uuid).then(function (current) {
-					if (!current) throw new Error('That playlist has gone.');
-					var body = {};
-					Object.keys(current).forEach(function (k) { body[k] = current[k]; });
-					body.episodes = backup.episodes;
-					body.episodeOrder = backup.episodeOrder;
-
-					var last = body.episodeOrder[body.episodeOrder.length - 1] ||
-						(current.episodeOrder || [])[0];
-					if (!last) throw new Error('Nothing to restore onto.');
-
-					return putPlaylist(body, last);
-				}).then(function () {
-					say('"' + backup.title + '" restored.', 'ok');
-				}).catch(function (e) {
-					say(e.message, 'error');
-				});
-			}
+			onclick: function () { doRestorePlaylist(backup); }
 		}));
+	}
+
+	// A backup holds playlist entries in the server's shape; the write path
+	// wants episodes in the shape loadUnplayed produces. Same facts, other
+	// names -- and note the server calls the episode uuid "episode".
+	function episodeFromEntry(entry) {
+		return {
+			uuid: entry.episode,
+			podcast: entry.podcast,
+			title: entry.title || '',
+			url: entry.url || '',
+			published: entry.published || '',
+			slug: entry.episodeSlug || '',
+			podcastSlug: entry.podcastSlug || ''
+		};
+	}
+
+	// Restoring is a Replace back to the old contents, and has to be: a single
+	// PUT would only re-add the one episode named in its URL, and after an Add
+	// there are extra episodes that only a DELETE can take back out. The first
+	// version of this sent one PUT and reported success without reading back,
+	// so it claimed to restore N and actually restored one.
+	function doRestorePlaylist(backup) {
+		var byUuid = {};
+		(backup.episodes || []).forEach(function (e) { byUuid[e.episode] = e; });
+
+		var wanted = (backup.episodeOrder || []).filter(function (uuid) {
+			return byUuid[uuid];
+		}).map(function (uuid) {
+			return episodeFromEntry(byUuid[uuid]);
+		});
+
+		if (!wanted.length) {
+			say('That backup holds nothing to restore.', 'error');
+			return;
+		}
+
+		say('Reading "' + backup.title + '"…');
+
+		readPlaylist(backup.uuid).then(function (current) {
+			if (!current) throw new Error('That playlist has gone.');
+
+			var existing = (current.episodeOrder || []).slice();
+			if (!existing.length) return current;
+
+			say('Clearing ' + existing.length + ' episodes…');
+			return clearPlaylist(current, existing);
+		}).then(function (state) {
+			return addInOrder(state, wanted);
+		}).then(function (after) {
+			var got = (after.episodeOrder || []).slice(0, wanted.length);
+			var right = got.length === wanted.length && wanted.every(function (e, i) {
+				return got[i] === e.uuid;
+			});
+
+			say(right
+				? '"' + backup.title + '" restored — ' + wanted.length + ' episodes, in order.'
+				: 'Restore did not land: the playlist came back with ' + got.length +
+				  ' episodes that do not match. Check it in the app.',
+				right ? 'ok' : 'error');
+		}).catch(function (e) {
+			say(e.message, 'error');
+		});
 	}
 
 	function doLoadPodcasts() {
@@ -862,11 +910,15 @@
 	// Replace has to actually empty the playlist first. If it cannot, stop --
 	// quietly carrying on would turn Replace into Add, which is what the first
 	// version of this did.
+	//
+	// The player sends an empty JSON object as the body of this DELETE, so we
+	// do too rather than sending none. It returns the whole playlist back,
+	// which we ignore -- the read-back below is what we trust.
 	function clearPlaylist(playlist, uuids) {
 		return uuids.reduce(function (chain, uuid, i) {
 			return chain.then(function () {
 				say('Clearing ' + (i + 1) + ' of ' + uuids.length + '…');
-				return api('/user/playlists/' + playlist.uuid + '/episode/' + uuid, undefined, 'DELETE');
+				return api('/user/playlists/' + playlist.uuid + '/episode/' + uuid, {}, 'DELETE');
 			});
 		}, Promise.resolve()).then(function () {
 			return readPlaylist(playlist.uuid);
@@ -879,9 +931,8 @@
 			}
 			return after;
 		}, function () {
-			throw new Error('Removing episodes was refused, so Replace cannot work yet. ' +
-				'Empty "' + playlist.title + '" in the app and use Add instead. ' +
-				'(Nothing was added.)');
+			throw new Error('Removing episodes failed part way through. Check "' +
+				playlist.title + '" in the app, then use Add. (Nothing was added.)');
 		});
 	}
 

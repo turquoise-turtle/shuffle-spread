@@ -39,18 +39,26 @@ Unofficial and reverse-engineered. Two sources, and they disagree:
 | Call | Body | Notes |
 |---|---|---|
 | `POST /user/podcast/list` | `{v: 1}` | JSON, not protobuf. `v` is a number. |
-| `POST /user/podcast/episodes` | `{uuid}` | play state only, for episodes you have touched |
-| `POST /up_next/sync` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | **read only** for the web player. `serverModified` is a string of ms. |
+| `POST /user/podcast/episodes` | `{uuid}` (a **podcast**) | play state only, for episodes you have touched |
+| `POST /user/podcast/episode/bookmarks` | `{uuid, podcast}` (an **episode**) | reads one episode's state: `playingStatus`, `playedUpTo`, `isDeleted`, `starred`, `duration`, `bookmarks`, `deselectedChapters`. A read despite the POST. |
+| `POST /user/podcast/episodes/bookmarks` | `{uuid}` (a **podcast**) | what the player uses instead. Same per-episode rows plus `starred`, `duration`, `bookmarks`, `deselectedChapters`, and the podcast's `autoStartFrom` / `autoSkipLast` / `episodesSortOrder` alongside. A superset of the above. |
+| `POST /up_next/list` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | reading the queue. What the web player uses, and what we use. Returns `{serverModified, episodes[], episodeSync[]}`; `serverModified` is a string of ms and must be fed back on the next read. |
+| `POST /up_next/sync` | the same body | answers that same read identically, and is what we used to ask. The player has moved off it for reads. Still the route the one-shot replace is attempted on — see below. |
 | `POST /up_next/play_last` | `{version: 2, episode: {uuid, title, url, podcast, published}}` | appends one; returns the whole queue |
-| `GET /user/playlists` | — | `manual: true` are hand-curated; the rest are saved filters |
+| `GET /user/playlists` | — | `manual: true` are hand-curated; the rest are saved filters. A manual playlist carries `episodeOrder` **and** `episodes`, and they are mirror images: `episodes` runs oldest `added` first, `episodeOrder` newest first. |
 | `PUT /user/playlists/{p}/episode/{e}` | the whole playlist | see the trap below |
-| `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | 302s to `podcasts.pocketcasts.com`; full episode list, **newest first** |
+| `DELETE /user/playlists/{p}/episode/{e}` | `{}` | removes that one episode. Returns the whole playlist as it now stands. The body is an empty JSON object, not absent — send it. |
+| `GET /subscription/status` | — | `tier` (`"Plus"`), `features`. Nothing here gates anything we do. |
+| `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | 302s to `podcasts.pocketcasts.com/{uuid}/episodes_full_{ts}.json`; full episode list, **newest first**. Unauthenticated — the player sends no bearer, only `Origin`. |
+
+`playingStatus` comes back as `0` as well as the documented `1` / `2` / `3`, and
+`0` is common. It appears to mean "no state recorded" rather than "not played" —
+in a captured podcast every `0` row also had `isDeleted: true`. We treat anything
+that is not `3` as unplayed, so this costs us nothing, but do not read `0` as a
+fourth playing state.
 
 ### Assumed, not confirmed
 
-- `DELETE /user/playlists/{p}/episode/{e}` for removal. CORS allows the method,
-  which is not proof the route exists. Replace checks the playlist really
-  emptied before adding anything.
 - `up_next/sync` with an Android-style `upNext.changes` array and `action: 5`
   (replace). The Up Next write path still tries it and verifies.
 
@@ -61,11 +69,30 @@ one in the URL — and **prepends** it. The body carries the full playlist but t
 server decides placement. Write a running order **back to front** or it comes out
 reversed. This was shipped wrong once.
 
+A captured playlist confirms the mechanism from the other end: every entry's
+`added` timestamp rises down the `episodes` array while `episodeOrder` runs the
+other way, so the server is ordering by `added` descending. Our back-to-front
+write, with a fresh `Date.now()` per `PUT`, lands correctly under that rule.
+
+The same trap bit the playlist **restore**, which sent one `PUT` carrying the
+whole backed-up playlist and reported success. One `PUT` re-adds one episode, so
+it restored one of N and said otherwise; after an Add there were also extra
+episodes that only a `DELETE` could remove. Restore is now the same clear,
+re-add back to front, read back as Replace.
+
 **`POST /user/episode` will reset play progress.** The player sends it before its
-playlist PUT, carrying `playingStatus: 1, playedUpTo: 0`. We queue in-progress
-episodes by design, so replaying that would wipe exactly the progress that
-matters. Deliberately omitted. If added back, send the real state from
-`/user/podcast/episodes`.
+playlist PUT, carrying the episode's full metadata (`duration`, `fileType`,
+`size`, `episodeNumber`, …) alongside `playingStatus: 1, playedUpTo: 0`. We
+queue in-progress episodes by design, so replaying that would wipe exactly the
+progress that matters. Deliberately omitted. If added back, send the real state
+from `/user/podcast/episodes`.
+
+**The feed JSON can be partial and does not look it.** `episodes_full` carries
+`has_more_episodes`, and it is newest-first, so a truncated response drops the
+*oldest* episodes — exactly the ones you are working through. Every show captured
+so far came back `false` — including one carrying all 540 of its episodes — so we
+have never seen it true and `loadUnplayed` does not check it. If a long-running
+show ever comes up short, look here first.
 
 **CORS allows `pocketcasts.com` but not `www.pocketcasts.com`** — the latter is a
 flat 403. Never add a `www` match. `play.pocketcasts.com` 301s to the bare host
@@ -107,11 +134,12 @@ uuids are public and fine to keep.
 
 ## Environment
 
-`git push` currently fails with 403 — the osxkeychain credential authenticates
-as the right user but lacks write scope, and there are no SSH keys. Commits are
-piling up locally. The Tampermonkey install URL points at
-`raw.githubusercontent.com/.../master/`, so nothing installs or updates until
-those commits land. The default branch is `master`, not `main`.
+The Tampermonkey install URL points at `raw.githubusercontent.com/.../master/`,
+so nothing installs or updates until a commit is on the remote. As of
+2026-09-09 `origin/master` matches local `master` (`git ls-remote origin master`),
+so everything through `7eb7d03` is live — an earlier 403 on `git push`, blamed on
+an osxkeychain credential without write scope, is no longer blocking. The default
+branch is `master`, not `main`.
 
 The page has never been rendered. The Chrome extension was not connected and
 headless Chrome hangs in this sandbox, so the CSS is unverified.

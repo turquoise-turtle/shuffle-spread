@@ -97,11 +97,13 @@ episode, and the playlist ends up reading forwards.
 **Add** leaves what is already there below the new episodes. **Replace** deletes
 the existing ones first, and if that fails it stops without adding anything
 rather than quietly behaving like Add. Either way the previous contents are
-backed up and a restore button appears.
+backed up and a restore button appears — and restoring runs the same clear,
+re-add, read-back as Replace, because one `PUT` can only ever put one episode
+back.
 
-Removal is assumed to be `DELETE` on the same path. That is the one call here
-not confirmed against a real request, so Replace checks the playlist really did
-empty before it adds anything.
+Removal is `DELETE` on the same path, carrying an empty JSON object as its body,
+and it hands back the whole playlist as it now stands. Replace still reads the
+playlist back and checks it really did empty before it adds anything.
 
 One thing the script deliberately does *not* copy from the web player: before
 its playlist `PUT`, the player also sends `POST /user/episode` carrying
@@ -123,13 +125,14 @@ there.) It uses:
 | `POST api.pocketcasts.com/user/podcast/list` | `{v: 1}` | your subscriptions |
 | `POST api.pocketcasts.com/user/podcast/episodes` | `{uuid}` | what you have played or archived |
 | `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | the full episode list for a show |
-| `POST api.pocketcasts.com/up_next/sync` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | reading the queue |
+| `POST api.pocketcasts.com/up_next/list` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | reading the queue |
 | `POST api.pocketcasts.com/up_next/play_last` | `{version: 2, episode: {…}}` | appending one episode |
 | `GET api.pocketcasts.com/user/playlists` | — | your playlists |
 | `PUT api.pocketcasts.com/user/playlists/{playlist}/episode/{episode}` | the whole playlist | adding to a playlist |
+| `DELETE api.pocketcasts.com/user/playlists/{playlist}/episode/{episode}` | `{}` | removing one from a playlist |
 
-Writing the queue is the awkward part. The web player only ever *reads* through
-`up_next/sync` — its changes go one episode at a time through `play_last` and
+Writing the queue is the awkward part. The web player only ever *reads*, through
+`up_next/list` — its changes go one episode at a time through `play_last` and
 friends. The mobile apps can also push a whole queue in one request by sending a
 change list to `up_next/sync` with action `5`, per
 [`UpNextSyncRequest.kt`](https://github.com/Automattic/pocket-casts-android/blob/main/modules/services/servers/src/main/java/au/com/shiftyjelly/pocketcasts/servers/sync/UpNextSyncRequest.kt).
