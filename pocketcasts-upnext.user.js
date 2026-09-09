@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pocket Casts — spread shuffle Up Next
 // @namespace    https://github.com/turquoise-turtle/shuffle-spread
-// @version      0.3.0
+// @version      0.3.1
 // @description  Take a running order from shuffle-spread and build it into a Pocket Casts Up Next queue or manual playlist
 // @author       turquoise-turtle
 // @homepageURL  https://github.com/turquoise-turtle/shuffle-spread
@@ -257,9 +257,10 @@
 	 * rest are saved filters whose contents the server works out, so
 	 * writing episodes to one would be meaningless.
 	 *
-	 * Adding is a PUT to .../playlists/{playlist}/episode/{episode} whose
-	 * body is the whole playlist. `episodeOrder` is what actually decides
-	 * the order -- `episodes` is just the bag of records it points into.
+	 * Adding is a PUT to .../playlists/{playlist}/episode/{episode}. The
+	 * body carries the whole playlist, but the server decides placement:
+	 * it adds only the episode named in the URL, and prepends it. So a
+	 * running order has to be written back to front.
 	 * ------------------------------------------------------------- */
 
 	function loadPlaylists() {
@@ -833,48 +834,72 @@
 			} catch (e) { /* best effort */ }
 			renderUndo();
 
-			var body = playlistWith(current, wanted, keepExisting);
-			var last = body.episodeOrder[body.episodeOrder.length - 1];
+			var existing = (current.episodeOrder || []).slice();
+			if (keepExisting || !existing.length) return current;
 
-			say((keepExisting ? 'Adding ' : 'Replacing with ') + wanted.length + ' episodes…');
-			return putPlaylist(body, last).then(function () {
-				return readPlaylist(playlist.uuid);
-			}).then(function (after) {
-				var have = {};
-				((after && after.episodeOrder) || []).forEach(function (u) { have[u] = true; });
-				var missing = wanted.filter(function (e) { return !have[e.uuid]; });
+			say('Clearing ' + existing.length + ' episodes…');
+			return clearPlaylist(current, existing);
+		}).then(function (state) {
+			return addInOrder(state, wanted);
+		}).then(function (after) {
+			var got = (after.episodeOrder || []).slice(0, wanted.length);
+			var right = wanted.every(function (e, i) { return got[i] === e.uuid; });
 
-				if (!missing.length) {
-					say(wanted.length + ' episodes now in "' + playlist.title + '".', 'ok');
-					playlists = playlists.map(function (p) {
-						return p.uuid === after.uuid ? after : p;
-					});
-					return;
-				}
-				return addOneByOne(playlist, wanted);
+			say(right
+				? wanted.length + ' episodes added to "' + playlist.title + '" in order.'
+				: 'Added, but the order came back as ' + got.length + ' episodes that do ' +
+				  'not match. Check the playlist.',
+				right ? 'ok' : 'error');
+
+			playlists = playlists.map(function (p) {
+				return p.uuid === after.uuid ? after : p;
 			});
 		}).catch(function (e) {
 			say(e.message, 'error');
 		});
 	}
 
-	// Same route the player takes: one PUT per episode, each carrying the
-	// playlist as it should look after that episode is added.
-	function addOneByOne(playlist, episodes) {
-		say('Bulk write did not take. Adding one at a time…');
+	// Replace has to actually empty the playlist first. If it cannot, stop --
+	// quietly carrying on would turn Replace into Add, which is what the first
+	// version of this did.
+	function clearPlaylist(playlist, uuids) {
+		return uuids.reduce(function (chain, uuid, i) {
+			return chain.then(function () {
+				say('Clearing ' + (i + 1) + ' of ' + uuids.length + '…');
+				return api('/user/playlists/' + playlist.uuid + '/episode/' + uuid, undefined, 'DELETE');
+			});
+		}, Promise.resolve()).then(function () {
+			return readPlaylist(playlist.uuid);
+		}).then(function (after) {
+			var left = (after && after.episodeOrder) || [];
+			if (left.length) {
+				throw new Error('Could not clear "' + playlist.title + '" — ' + left.length +
+					' episodes remain. Empty it in the app, then use Add. ' +
+					'(Nothing was added, so the playlist is as you left it.)');
+			}
+			return after;
+		}, function () {
+			throw new Error('Removing episodes was refused, so Replace cannot work yet. ' +
+				'Empty "' + playlist.title + '" in the app and use Add instead. ' +
+				'(Nothing was added.)');
+		});
+	}
 
-		return readPlaylist(playlist.uuid).then(function (current) {
-			return episodes.reduce(function (chain, episode, i) {
-				return chain.then(function (state) {
-					say('Adding ' + (i + 1) + ' of ' + episodes.length + '…');
-					var body = playlistWith(state, [episode], true);
-					return putPlaylist(body, episode.uuid).then(function () {
-						return body;
-					});
+	// Each PUT prepends the episode named in the URL, so walk the running
+	// order backwards and the playlist ends up reading forwards.
+	function addInOrder(playlist, episodes) {
+		var reversed = episodes.slice().reverse();
+
+		return reversed.reduce(function (chain, episode, i) {
+			return chain.then(function (state) {
+				say('Adding ' + (i + 1) + ' of ' + reversed.length + '…');
+				var body = playlistWith(state, [episode], true);
+				return putPlaylist(body, episode.uuid).then(function () {
+					return body;
 				});
-			}, Promise.resolve(current));
-		}).then(function () {
-			say('Added ' + episodes.length + ' episodes to "' + playlist.title + '".', 'ok');
+			});
+		}, Promise.resolve(playlist)).then(function () {
+			return readPlaylist(playlist.uuid);
 		});
 	}
 

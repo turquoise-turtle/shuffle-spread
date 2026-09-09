@@ -89,12 +89,19 @@ The destination dropdown lists Up Next plus any **manual** playlist. Saved
 filters are deliberately left out — the server decides what is in those, so
 writing episodes to one would achieve nothing.
 
-Adding is a `PUT` whose body is the entire playlist, so the script reads the
-playlist first and copies every field back untouched, changing only `episodes`
-and `episodeOrder`. `episodeOrder` is what actually decides the order; `episodes`
-is just the bag of records it points into. **Add** puts the running order in
-front of what is already there, **Replace** clears it out first; either way the
-previous contents are backed up and a restore button appears.
+`PUT /user/playlists/{playlist}/episode/{episode}` adds **one** episode, and
+**prepends** it — the body carries the whole playlist, but the server decides the
+placement, not you. So the script walks the running order backwards, one PUT per
+episode, and the playlist ends up reading forwards.
+
+**Add** leaves what is already there below the new episodes. **Replace** deletes
+the existing ones first, and if that fails it stops without adding anything
+rather than quietly behaving like Add. Either way the previous contents are
+backed up and a restore button appears.
+
+Removal is assumed to be `DELETE` on the same path. That is the one call here
+not confirmed against a real request, so Replace checks the playlist really did
+empty before it adds anything.
 
 One thing the script deliberately does *not* copy from the web player: before
 its playlist `PUT`, the player also sends `POST /user/episode` carrying
