@@ -8,7 +8,7 @@ Two pieces that work on their own or together:
 | | |
 |---|---|
 | **[The page](https://turquoise-turtle.github.io/shuffle-spread/)** | List your shows and how many episodes you have left, press Shuffle, copy the running order. |
-| **[The userscript](pocketcasts-upnext.user.js)** | On the Pocket Casts web player: reads what you actually have left, and turns a running order back into your Up Next queue. |
+| **[The userscript](pocketcasts-upnext.user.js)** | On the Pocket Casts web player: reads what you actually have left, and turns a running order back into your Up Next queue or a manual playlist. |
 
 ## How the shuffle works
 
@@ -52,8 +52,13 @@ trimming can only ever cut from the end.
 Everything below works on the free plan — the web player and Up Next have both
 been free [since March 2025](https://blog.pocketcasts.com/2025/03/11/webplayer/).
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/), then add
-   `pocketcasts-upnext.user.js`.
+1. Install [Tampermonkey](https://www.tampermonkey.net/), then
+   **[click here to install the script](https://raw.githubusercontent.com/turquoise-turtle/shuffle-spread/master/pocketcasts-upnext.user.js)**
+   — Tampermonkey recognises the `.user.js` URL and offers an install screen.
+   It then checks that same URL for updates on its own, so a `git push` here is
+   all it takes to ship one. Bump `@version` or Tampermonkey will ignore the
+   change. To update by hand: Tampermonkey dashboard → **Utilities** → **Check
+   for userscript updates**.
 2. Open [pocketcasts.com/podcasts](https://pocketcasts.com/podcasts) and press
    **Spread shuffle** in the bottom right.
 3. **Load subscriptions** — tick the shows you are working through. This is a
@@ -78,6 +83,25 @@ Two other things worth knowing: trailers and bonus episodes count as unplayed
 like anything else, and if a show's play state cannot be read the script stops
 rather than guess, so it never queues something you have already heard.
 
+### Playlists
+
+The destination dropdown lists Up Next plus any **manual** playlist. Saved
+filters are deliberately left out — the server decides what is in those, so
+writing episodes to one would achieve nothing.
+
+Adding is a `PUT` whose body is the entire playlist, so the script reads the
+playlist first and copies every field back untouched, changing only `episodes`
+and `episodeOrder`. `episodeOrder` is what actually decides the order; `episodes`
+is just the bag of records it points into. **Add** puts the running order in
+front of what is already there, **Replace** clears it out first; either way the
+previous contents are backed up and a restore button appears.
+
+One thing the script deliberately does *not* copy from the web player: before
+its playlist `PUT`, the player also sends `POST /user/episode` carrying
+`playingStatus: 1, playedUpTo: 0`. Replaying that would reset your progress on
+any part-played episode, so it is left out. If a newly added episode ever shows
+up without its artwork or duration, that omission is the first thing to suspect.
+
 ### What it talks to
 
 Pocket Casts has no official API, but the apps are open source and the web
@@ -94,6 +118,8 @@ there.) It uses:
 | `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | the full episode list for a show |
 | `POST api.pocketcasts.com/up_next/sync` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | reading the queue |
 | `POST api.pocketcasts.com/up_next/play_last` | `{version: 2, episode: {…}}` | appending one episode |
+| `GET api.pocketcasts.com/user/playlists` | — | your playlists |
+| `PUT api.pocketcasts.com/user/playlists/{playlist}/episode/{episode}` | the whole playlist | adding to a playlist |
 
 Writing the queue is the awkward part. The web player only ever *reads* through
 `up_next/sync` — its changes go one episode at a time through `play_last` and

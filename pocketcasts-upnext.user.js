@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         Pocket Casts — spread shuffle Up Next
 // @namespace    https://github.com/turquoise-turtle/shuffle-spread
-// @version      0.2.0
-// @description  Take a running order from shuffle-spread and build it into the Pocket Casts Up Next queue
+// @version      0.3.0
+// @description  Take a running order from shuffle-spread and build it into a Pocket Casts Up Next queue or manual playlist
 // @author       turquoise-turtle
+// @homepageURL  https://github.com/turquoise-turtle/shuffle-spread
+// @supportURL   https://github.com/turquoise-turtle/shuffle-spread/issues
+// @downloadURL  https://raw.githubusercontent.com/turquoise-turtle/shuffle-spread/master/pocketcasts-upnext.user.js
+// @updateURL    https://raw.githubusercontent.com/turquoise-turtle/shuffle-spread/master/pocketcasts-upnext.user.js
 // @match        https://pocketcasts.com/*
 // @match        https://play.pocketcasts.com/*
 // @run-at       document-start
@@ -18,6 +22,7 @@
 	var PAGE = 'https://turquoise-turtle.github.io/shuffle-spread/';
 	var BACKUP = 'spread-shuffle.upnext-backup';
 	var INCLUDED = 'spread-shuffle.included';
+	var PL_BACKUP = 'spread-shuffle.playlist-backup';
 
 	var PLAYED = 3; // EpisodePlayingStatus: 1 not played, 2 in progress, 3 completed
 	var REPLACE = 5; // UpNextChange.ACTION_REPLACE
@@ -89,14 +94,14 @@
 	 * API
 	 * ------------------------------------------------------------- */
 
-	function api(path, body) {
+	function api(path, body, method) {
 		return fetch(API + path, {
-			method: 'POST',
+			method: method || (body === undefined ? 'GET' : 'POST'),
 			headers: {
 				'Authorization': 'Bearer ' + requireToken(),
 				'Content-Type': 'application/json'
 			},
-			body: JSON.stringify(body)
+			body: body === undefined ? undefined : JSON.stringify(body)
 		}).then(function (res) {
 			var type = res.headers.get('content-type') || '';
 			if (!res.ok) {
@@ -130,7 +135,8 @@
 			.catch(function () { return null; });
 
 		return Promise.all([feed, mine]).then(function (both) {
-			var all = (both[0].podcast && both[0].podcast.episodes) || [];
+			var show = both[0].podcast || {};
+			var all = show.episodes || [];
 
 			// Without play state we would queue up things already listened to,
 			// so treat that as a failure rather than quietly queueing everything.
@@ -162,7 +168,10 @@
 					published: ep.published || '',
 					podcast: podcast.uuid,
 					showTitle: podcast.title,
-					type: ep.type || 'full'
+					type: ep.type || 'full',
+					// playlist entries carry slugs; Up Next does not
+					slug: ep.slug || '',
+					podcastSlug: show.slug || ''
 				};
 			});
 		});
@@ -242,10 +251,87 @@
 	}
 
 	/* ---------------------------------------------------------------
+	 * Playlists
+	 *
+	 * Only "manual" playlists hold episodes you put there by hand; the
+	 * rest are saved filters whose contents the server works out, so
+	 * writing episodes to one would be meaningless.
+	 *
+	 * Adding is a PUT to .../playlists/{playlist}/episode/{episode} whose
+	 * body is the whole playlist. `episodeOrder` is what actually decides
+	 * the order -- `episodes` is just the bag of records it points into.
+	 * ------------------------------------------------------------- */
+
+	function loadPlaylists() {
+		return api('/user/playlists').then(function (data) {
+			return (data.playlists || []).filter(function (p) {
+				return p.manual && !p.isDeleted;
+			});
+		});
+	}
+
+	function playlistEntry(episode) {
+		return {
+			episode: episode.uuid,
+			podcast: episode.podcast,
+			added: String(Date.now()),
+			published: episode.published,
+			title: episode.title,
+			url: episode.url,
+			podcastSlug: episode.podcastSlug || '',
+			episodeSlug: episode.slug || ''
+		};
+	}
+
+	// Returns the playlist as it should end up, leaving the server's own
+	// fields (filters, icon, sort) exactly as we found them.
+	function playlistWith(playlist, episodes, keepExisting) {
+		var body = {};
+		Object.keys(playlist).forEach(function (k) { body[k] = playlist[k]; });
+
+		var entries = [];
+		var order = [];
+		var seen = {};
+
+		function take(entry, uuid) {
+			if (seen[uuid]) return;
+			seen[uuid] = true;
+			entries.push(entry);
+			order.push(uuid);
+		}
+
+		episodes.forEach(function (ep) { take(playlistEntry(ep), ep.uuid); });
+
+		if (keepExisting) {
+			(playlist.episodeOrder || []).forEach(function (uuid) {
+				var existing = (playlist.episodes || []).filter(function (e) {
+					return e.episode === uuid;
+				})[0];
+				if (existing) take(existing, uuid);
+			});
+		}
+
+		body.episodes = entries;
+		body.episodeOrder = order;
+		return body;
+	}
+
+	function putPlaylist(body, episodeUuid) {
+		return api('/user/playlists/' + body.uuid + '/episode/' + episodeUuid, body, 'PUT');
+	}
+
+	function readPlaylist(uuid) {
+		return loadPlaylists().then(function (list) {
+			return list.filter(function (p) { return p.uuid === uuid; })[0] || null;
+		});
+	}
+
+	/* ---------------------------------------------------------------
 	 * State
 	 * ------------------------------------------------------------- */
 
 	var podcasts = [];   // every subscription: [{uuid, title, use}]
+	var playlists = [];  // manual playlists the order can be written to
 	var shows = [];      // the ticked ones, once counted: [{uuid, title, episodes}]
 	var resolved = [];   // episodes in shuffled order, ready to write
 
@@ -360,6 +446,8 @@
 		'button.act.go{background:#f43e37;border-color:transparent;color:#fff;font-weight:600}',
 		'button.act.warn{background:#5a2d2b;border-color:#7d3b38;color:#ffd9d7}',
 		'button.act:disabled{opacity:.45;cursor:default}',
+		'.dest{width:100%;padding:6px 8px;margin:0 0 6px;border:1px solid #3a3a42;',
+		'border-radius:6px;background:#26262c;color:#eee;font-size:12px}',
 		'.filter{width:100%;padding:6px 8px;margin:2px 0 6px;border:1px solid #3a3a42;',
 		'border-radius:6px;background:#111114;color:#ddd;font-size:12px}',
 		'textarea{width:100%;height:88px;padding:8px;border:1px solid #3a3a42;border-radius:6px;',
@@ -423,6 +511,13 @@
 		body.appendChild(ui.handoff);
 
 		body.appendChild(el('h4', { text: '2 · Running order' }));
+		ui.dest = el('select', { class: 'dest' });
+		ui.dest.appendChild(el('option', { value: 'upnext', text: 'Up Next' }));
+		ui.dest.addEventListener('change', function () {
+			if (resolved.length) doPreview();
+		});
+		body.appendChild(ui.dest);
+
 		ui.paste = el('textarea', { placeholder: 'Paste the copied running order from the shuffle page…' });
 		body.appendChild(ui.paste);
 		body.appendChild(el('button', { class: 'act', text: 'Preview', onclick: doPreview }));
@@ -451,9 +546,20 @@
 		renderUndo();
 	}
 
+	function readPlaylistStash() {
+		try {
+			var raw = localStorage.getItem(PL_BACKUP);
+			return raw ? JSON.parse(raw) : null;
+		} catch (e) {
+			return null;
+		}
+	}
+
 	function renderUndo() {
-		var backup = readStash();
 		ui.undo.textContent = '';
+		renderPlaylistUndo();
+
+		var backup = readStash();
 		if (!backup || !backup.episodes || !backup.episodes.length) return;
 
 		ui.undo.appendChild(el('h4', { text: 'Backup' }));
@@ -474,7 +580,38 @@
 		}));
 		ui.undo.appendChild(el('p', {
 			class: 'note',
-			text: 'Saved ' + new Date(backup.at).toLocaleString() + '.'
+			text: 'Up Next saved ' + new Date(backup.at).toLocaleString() + '.'
+		}));
+	}
+
+	function renderPlaylistUndo() {
+		var backup = readPlaylistStash();
+		if (!backup || !backup.uuid) return;
+
+		ui.undo.appendChild(el('h4', { text: 'Backup' }));
+		ui.undo.appendChild(el('button', {
+			class: 'act warn',
+			text: 'Restore "' + backup.title + '" (' + (backup.episodeOrder || []).length + ')',
+			onclick: function () {
+				say('Restoring "' + backup.title + '"…');
+				readPlaylist(backup.uuid).then(function (current) {
+					if (!current) throw new Error('That playlist has gone.');
+					var body = {};
+					Object.keys(current).forEach(function (k) { body[k] = current[k]; });
+					body.episodes = backup.episodes;
+					body.episodeOrder = backup.episodeOrder;
+
+					var last = body.episodeOrder[body.episodeOrder.length - 1] ||
+						(current.episodeOrder || [])[0];
+					if (!last) throw new Error('Nothing to restore onto.');
+
+					return putPlaylist(body, last);
+				}).then(function () {
+					say('"' + backup.title + '" restored.', 'ok');
+				}).catch(function (e) {
+					say(e.message, 'error');
+				});
+			}
 		}));
 	}
 
@@ -491,6 +628,7 @@
 			shows = [];
 			ui.filter.hidden = false;
 			renderPodcasts();
+			refreshDestinations();
 
 			var ticked = podcasts.filter(function (p) { return p.use; }).length;
 			say(ticked
@@ -500,6 +638,23 @@
 			say(e.message, 'error');
 		}).then(function () {
 			ui.loadBtn.disabled = false;
+		});
+	}
+
+	// Manual playlists are a second place the running order can go.
+	function refreshDestinations() {
+		loadPlaylists().then(function (list) {
+			playlists = list;
+			var chosen = ui.dest.value;
+			ui.dest.textContent = '';
+			ui.dest.appendChild(el('option', { value: 'upnext', text: 'Up Next' }));
+			playlists.forEach(function (p) {
+				ui.dest.appendChild(el('option', { value: p.uuid, text: 'Playlist: ' + p.title }));
+			});
+			ui.dest.value = chosen;
+			if (!ui.dest.value) ui.dest.value = 'upnext';
+		}).catch(function () {
+			// no playlists is not an error; Up Next still works
 		});
 	}
 
@@ -623,11 +778,25 @@
 		});
 		ui.preview.appendChild(list);
 
-		ui.preview.appendChild(el('button', {
-			class: 'act go',
-			text: 'Replace Up Next with these ' + resolved.length,
-			onclick: doWrite
-		}));
+		var playlist = chosenPlaylist();
+		if (playlist) {
+			ui.preview.appendChild(el('button', {
+				class: 'act go',
+				text: 'Add ' + resolved.length + ' to "' + playlist.title + '"',
+				onclick: function () { doWritePlaylist(playlist, true); }
+			}));
+			ui.preview.appendChild(el('button', {
+				class: 'act warn',
+				text: 'Replace "' + playlist.title + '"',
+				onclick: function () { doWritePlaylist(playlist, false); }
+			}));
+		} else {
+			ui.preview.appendChild(el('button', {
+				class: 'act go',
+				text: 'Replace Up Next with these ' + resolved.length,
+				onclick: doWrite
+			}));
+		}
 
 		var warnings = [];
 		if (parsed.missing.length) {
@@ -638,6 +807,75 @@
 				'reload your shows if you have listened to some since shuffling');
 		}
 		say(warnings.length ? 'Heads up: ' + warnings.join('; ') + '.' : '');
+	}
+
+	function chosenPlaylist() {
+		var value = ui.dest.value;
+		return playlists.filter(function (p) { return p.uuid === value; })[0] || null;
+	}
+
+	function doWritePlaylist(playlist, keepExisting) {
+		var wanted = resolved.slice();
+
+		say('Reading "' + playlist.title + '"…');
+
+		readPlaylist(playlist.uuid).then(function (current) {
+			if (!current) throw new Error('That playlist has gone.');
+
+			try {
+				localStorage.setItem(PL_BACKUP, JSON.stringify({
+					at: Date.now(),
+					uuid: current.uuid,
+					title: current.title,
+					episodes: current.episodes || [],
+					episodeOrder: current.episodeOrder || []
+				}));
+			} catch (e) { /* best effort */ }
+			renderUndo();
+
+			var body = playlistWith(current, wanted, keepExisting);
+			var last = body.episodeOrder[body.episodeOrder.length - 1];
+
+			say((keepExisting ? 'Adding ' : 'Replacing with ') + wanted.length + ' episodes…');
+			return putPlaylist(body, last).then(function () {
+				return readPlaylist(playlist.uuid);
+			}).then(function (after) {
+				var have = {};
+				((after && after.episodeOrder) || []).forEach(function (u) { have[u] = true; });
+				var missing = wanted.filter(function (e) { return !have[e.uuid]; });
+
+				if (!missing.length) {
+					say(wanted.length + ' episodes now in "' + playlist.title + '".', 'ok');
+					playlists = playlists.map(function (p) {
+						return p.uuid === after.uuid ? after : p;
+					});
+					return;
+				}
+				return addOneByOne(playlist, wanted);
+			});
+		}).catch(function (e) {
+			say(e.message, 'error');
+		});
+	}
+
+	// Same route the player takes: one PUT per episode, each carrying the
+	// playlist as it should look after that episode is added.
+	function addOneByOne(playlist, episodes) {
+		say('Bulk write did not take. Adding one at a time…');
+
+		return readPlaylist(playlist.uuid).then(function (current) {
+			return episodes.reduce(function (chain, episode, i) {
+				return chain.then(function (state) {
+					say('Adding ' + (i + 1) + ' of ' + episodes.length + '…');
+					var body = playlistWith(state, [episode], true);
+					return putPlaylist(body, episode.uuid).then(function () {
+						return body;
+					});
+				});
+			}, Promise.resolve(current));
+		}).then(function () {
+			say('Added ' + episodes.length + ' episodes to "' + playlist.title + '".', 'ok');
+		});
 	}
 
 	function doWrite() {
