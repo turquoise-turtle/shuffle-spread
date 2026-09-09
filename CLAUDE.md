@@ -1,0 +1,117 @@
+# shuffle-spread — working notes
+
+Two independent pieces. Neither imports the other; they meet at two small
+handover formats (see README).
+
+- **The page** (`index.html`, `style.css`, `main.js`) — pure ordering. No
+  network, no accounts. Given shows and counts, produces a running order.
+- **The userscript** (`pocketcasts-upnext.user.js`) — all Pocket Casts I/O.
+  Runs on the web player, reads what is unplayed, writes Up Next or a playlist.
+
+Keep that split. The page must stay useful with no Pocket Casts account, and
+the userscript must not grow ordering logic of its own.
+
+## House style
+
+- Tabs. `var` and `function () {}` throughout — no `const`/`let`, no arrows.
+  Not for compatibility; just consistency with what is already there.
+- No build step, no dependencies, no package.json. Files are served as-is by
+  GitHub Pages and read as-is by Tampermonkey. Keep it that way.
+- en-AU in prose, comments and UI strings. Not in CSS properties (`color`),
+  DOM APIs (`scrollIntoView({behavior})`) or third-party field names.
+- Comments explain *why*, especially where the code looks odd because the API
+  is odd. Those comments are the record of what was learned the hard way.
+- Bump `@version` in the userscript on any change, or Tampermonkey will not
+  offer the update.
+
+## The Pocket Casts API
+
+Unofficial and reverse-engineered. Two sources, and they disagree:
+
+- The **apps** are open source (`Automattic/pocket-casts-android`,
+  `modules/services/servers/.../sync/SyncService.kt` lists every route).
+- The **web player** often uses different shapes for the same endpoint, and the
+  web player is what we run inside. **Where they differ, the web player wins.**
+  Verify against a real captured request before trusting the Kotlin.
+
+### Confirmed against real captured requests
+
+| Call | Body | Notes |
+|---|---|---|
+| `POST /user/podcast/list` | `{v: 1}` | JSON, not protobuf. `v` is a number. |
+| `POST /user/podcast/episodes` | `{uuid}` | play state only, for episodes you have touched |
+| `POST /up_next/sync` | `{version: 2, model: "webplayer", serverModified, showPlayStatus: true}` | **read only** for the web player. `serverModified` is a string of ms. |
+| `POST /up_next/play_last` | `{version: 2, episode: {uuid, title, url, podcast, published}}` | appends one; returns the whole queue |
+| `GET /user/playlists` | — | `manual: true` are hand-curated; the rest are saved filters |
+| `PUT /user/playlists/{p}/episode/{e}` | the whole playlist | see the trap below |
+| `GET cache.pocketcasts.com/mobile/podcast/full/{uuid}` | — | 302s to `podcasts.pocketcasts.com`; full episode list, **newest first** |
+
+### Assumed, not confirmed
+
+- `DELETE /user/playlists/{p}/episode/{e}` for removal. CORS allows the method,
+  which is not proof the route exists. Replace checks the playlist really
+  emptied before adding anything.
+- `up_next/sync` with an Android-style `upNext.changes` array and `action: 5`
+  (replace). The Up Next write path still tries it and verifies.
+
+## Traps, each of which has already cost a debugging round
+
+**The playlist PUT is not a whole-playlist write.** It adds *one* episode — the
+one in the URL — and **prepends** it. The body carries the full playlist but the
+server decides placement. Write a running order **back to front** or it comes out
+reversed. This was shipped wrong once.
+
+**`POST /user/episode` will reset play progress.** The player sends it before its
+playlist PUT, carrying `playingStatus: 1, playedUpTo: 0`. We queue in-progress
+episodes by design, so replaying that would wipe exactly the progress that
+matters. Deliberately omitted. If added back, send the real state from
+`/user/podcast/episodes`.
+
+**CORS allows `pocketcasts.com` but not `www.pocketcasts.com`** — the latter is a
+flat 403. Never add a `www` match. `play.pocketcasts.com` 301s to the bare host
+and is matched only for old bookmarks.
+
+**Do not guard the panel on URL paths.** That host serves the marketing site too,
+but the player's paths cannot be enumerated: signed out, `/podcasts` bounces to
+`/user/login` while `/upnext` and `/files` 404. Wait for a token instead — one
+only exists once the player has authenticated.
+
+**Never let a write silently fall back to a different write.** Replace once
+degraded into Add this way. A fallback that runs after a *stale read* can also
+double-apply. Prefer one deterministic path that reports failure over a clever
+one with a rescue.
+
+**Read back after writing.** Do not report success because a call returned 200.
+
+## Testing
+
+There is no test account, so nothing can be run end to end. What works instead:
+
+- Throwaway harnesses in the scratchpad (they do not survive the session, so
+  rebuild rather than hunt for them): `eval` a slice of the real source by
+  string offset, feed it mocks **built from captured payloads**, assert. Do not
+  hand-write expected shapes from memory — copy them from a real capture.
+- Simulate the server's actual quirks, not its documented behaviour. The
+  prepend-on-PUT simulation is what proved the ordering fix.
+- Ordering invariants worth re-asserting after any change to the shuffle:
+  episodes of a show stay ascending; any prefix holds episodes 1..j with no
+  gaps; caps compose; `randomise: false` reproduces a plain even interleave.
+
+## Asking the user for captures
+
+They have been happy to paste real requests from DevTools, and it has settled
+every question the Kotlin could not. Ask for: request URL and method, request
+payload, response content-type, and the first stretch of the response. Remind
+them to scrub the `Authorization` value and their email; podcast and episode
+uuids are public and fine to keep.
+
+## Environment
+
+`git push` currently fails with 403 — the osxkeychain credential authenticates
+as the right user but lacks write scope, and there are no SSH keys. Commits are
+piling up locally. The Tampermonkey install URL points at
+`raw.githubusercontent.com/.../master/`, so nothing installs or updates until
+those commits land. The default branch is `master`, not `main`.
+
+The page has never been rendered. The Chrome extension was not connected and
+headless Chrome hangs in this sandbox, so the CSS is unverified.
